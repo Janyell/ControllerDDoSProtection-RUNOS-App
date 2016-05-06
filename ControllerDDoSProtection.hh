@@ -1,12 +1,16 @@
 #pragma once
 
+#include <mutex>
+
 #include "Application.hh"
 #include "OFMessageHandler.hh"
 #include "ILinkDiscovery.hh"
+#include "Controller.hh"
+#include "Switch.hh"
 
 // EtherType
 #define IPv4_TYPE 0x0800
-#define IPv_TYPE 0x86DD
+#define IPv6_TYPE 0x86DD
 
 typedef uint32_t IPAddressV4;
 
@@ -34,18 +38,24 @@ private:
 
     static bool isDDoS;
 
-    QTimer* DetectDDoSTimer;
+    QTimer* detectDDoSTimer;
     static const size_t DETECT_DDOS_TIMER_INTERVAL = 5;
 
-    QTimer* ClearInvalidUsersTimer; // TODO
+    QTimer* updateValidAvgConnTimer;
+    static const time_t UPDATE_VALID_AVG_CONN_TIMER_INTERVAL = 100;
+
+    QTimer* clearInvalidUsersTimer;
     static const size_t CLEAR_INVALID__USERS_TIMER_INTERVAL = 500;
 
-    static void getStatisticsFromSwitch() {}
+    OFTransaction* pdescr;
 
-    //    std::mutex db_lock; TODO
 
     class Users {
     public:
+        enum UsersExceptionTypes {
+            IsValid
+        };
+
         enum UsersTypes {
             Valid,
             Invalid,
@@ -55,9 +65,11 @@ private:
         class ValidUsersParams {
         public:
             ValidUsersParams (size_t _connCounter = 1, int _avgConnNumber = NON_AVG_CONN_NUMBER):
-                connCounter(_connCounter), avgConnNumber(_avgConnNumber), updateConnCounterTime(time(NULL)) { }
+                isChecked(true), connCounter(_connCounter), avgConnNumber(_avgConnNumber), updateConnCounterTime(time(NULL)) { }
             void increaseConnCounter();
+            bool typeIsChecked() { return isChecked; }
         private:
+            bool isChecked;
             size_t connCounter;
             int avgConnNumber;
             time_t updateConnCounterTime;
@@ -75,7 +87,7 @@ private:
             InvalidUsersParams (size_t _connCounter = 1,
                                 time_t _hardTimeout = HARD_TIMEOUT,
                                 time_t _idleTimeout = IDLE_TIMEOUT)
-                : type(DDoS), connCounter(_connCounter), hardTimeout(_hardTimeout), idleTimeout(_idleTimeout)
+                : type(DDoS), isChecked(false), connCounter(_connCounter), hardTimeout(_hardTimeout), idleTimeout(_idleTimeout)
             {
                 createTime = updateTime = updateConnCounterTime = time(NULL);
             }
@@ -88,9 +100,9 @@ private:
                 return false;
             }
             InvalidUsersTypes getType() { return type; }
+            bool typeIsChecked() { return isChecked; }
         private:
             void checkType();
-            bool isValid() { return false; }
             void reset (time_t _hardTimeout = HARD_TIMEOUT,
                         time_t _idleTimeout = IDLE_TIMEOUT)
             {
@@ -99,8 +111,10 @@ private:
                 idleTimeout = _idleTimeout;
                 createTime = updateTime = updateConnCounterTime = time(NULL);
                 type = DDoS;
+                isChecked = false;
             }
             InvalidUsersTypes type;
+            bool isChecked;
             size_t connCounter;
             time_t hardTimeout;
             time_t idleTimeout;
@@ -173,7 +187,9 @@ private:
 
     private:
         std::map<IPAddressV4, ValidUsersParams> validUsers;
+//        std::mutex validUsersLock; /* todo */
         std::map<IPAddressV4, InvalidUsersParams> invalidUsers;
+//        std::mutex invalidUsersLock; /* todo */
         static Statistics statistics;
     } static users;
 
@@ -184,13 +200,13 @@ private:
             size_t cur;
             size_t max;
         };
+        void init();
+        inline bool isInvalidConnNumber (size_t connNumber) { return connNumber >= validAvgConnNumber.cur; }
+        inline bool isInvalidPacketNumber (size_t packetNumber) { return packetNumber < validPacketNumber.cur; }
+    private:
         DynamicNumbers validAvgConnNumber;  // k
         DynamicNumbers validPacketNumber;   // n
-        void init();
-        QTimer* UpdateValidAvgConnTimer; // TODO
-        static const time_t UPDATE_VALID_AVG_CONN_TIMER_INTERVAL = 1000;
 
-    private:
         static const size_t VALID_AVG_CONN_NUMBER_MIN = 7;
         static const size_t VALID_AVG_CONN_NUMBER_MAX = 13;
         static const size_t VALID_PACKET_NUMBER_MIN = 3;
@@ -199,8 +215,8 @@ private:
 
     class FlowHandler {
     public:
-        static void setNormalTimeouts (Flow* flow);
-        static void setShortTimeouts (Flow* flow);
+        inline static void setNormalTimeouts (Flow* flow);
+        inline static void setShortTimeouts (Flow* flow);
 
     private:
         static const uint16_t NORMAL_HARD_TIMEOUT = 600;
@@ -208,9 +224,12 @@ private:
         static const uint16_t SHORT_HARD_TIMEOUT = 60;
         static const uint16_t SHORT_IDLE_TIMEOUT = 10;
     };
-
+signals:
+    void UsersTypeChanged (IPAddressV4 ipAddr, Switch* sw = NULL);
 private slots:
-    void DetectDDoSTimeout();
-//    void UpdateValidAvgConnTimeout();
-//    void ClearInvalidUsersTimeout();
+    void detectDDoSTimeout();
+    void updateValidAvgConnTimeout();
+    void clearInvalidUsersTimeout();
+    void getUsersStatistics (IPAddressV4 ipAddr, Switch* sw = NULL);
+    void usersStatisticsArrived (OFConnection* ofconn, std::shared_ptr<OFMsgUnion> reply);
 };

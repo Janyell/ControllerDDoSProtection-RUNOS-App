@@ -1,8 +1,5 @@
 #include "ControllerDDoSProtection.hh"
-#include "Common.hh"
-#include "Controller.hh"
 #include "AppObject.hh"
-
 
 REGISTER_APPLICATION(ControllerDDoSProtection, {"controller", "switch-manager", ""})
 
@@ -15,19 +12,99 @@ ControllerDDoSProtection::Users::Statistics ControllerDDoSProtection::Users::sta
 // ControllerDDoSProtection
 void ControllerDDoSProtection::init(Loader *loader, const Config& config)
 {
-    DetectDDoSTimer = new QTimer(this);
+    detectDDoSTimer = new QTimer(this);
     Controller* ctrl = Controller::get(loader);
     ctrl->registerHandler(this);
     params.init();
 
-    connect(DetectDDoSTimer, SIGNAL(timeout()), this, SLOT(DetectDDoSTimeout()));
+    QObject::connect(detectDDoSTimer, SIGNAL(timeout()), this, SLOT(detectDDoSTimeout()));
+    QObject::connect(updateValidAvgConnTimer, SIGNAL(timeout()), this, SLOT(updateValidAvgConnTimeout()));
+    QObject::connect(clearInvalidUsersTimer, SIGNAL(timeout()), this, SLOT(clearInvalidUsersTimeout()));
+    QObject::connect(this, SIGNAL(UsersTypeChanged(IPAddressV4)), this, SLOT(getUsersStatistics(IPAddressV4)));
+
+    pdescr = Controller::get(loader)->registerStaticTransaction(this);
+    QObject::connect(pdescr, &OFTransaction::response,
+                     this, &ControllerDDoSProtection::usersStatisticsArrived);
+
+    QObject::connect(pdescr, &OFTransaction::error,
+    [](OFConnection* conn, std::shared_ptr<OFMsgUnion> msg)
+    {
+        of13::Error& error = msg->error;
+        LOG(ERROR) << "Switch reports error for OFPT_MULTIPART_REQUEST: "
+            << "type " << (int) error.type() << " code " << error.code();
+        // Send request again
+        conn->send(error.data(), error.data_len());
+    });
 }
 
 void ControllerDDoSProtection::startUp(Loader *)
 {
-    DetectDDoSTimer->start(DETECT_DDOS_TIMER_INTERVAL * 1000);
+    detectDDoSTimer->start(DETECT_DDOS_TIMER_INTERVAL * 1000);
 }
 
+void ControllerDDoSProtection::detectDDoSTimeout()
+{
+    users.update();
+    Users::Statistics statistics = users.getStatistics();
+    bool isDetectedDDoS = statistics.handle();
+    if (isDetectedDDoS) {
+        isDDoS = true;
+    }
+    users.resetStatistics();
+}
+
+void ControllerDDoSProtection::updateValidAvgConnTimeout()
+{
+    /* TODO */
+}
+
+void ControllerDDoSProtection::clearInvalidUsersTimeout()
+{
+    /* TODO */
+}
+
+void ControllerDDoSProtection::getUsersStatistics (IPAddressV4 ipAddr, Switch* sw)
+{
+    /* TODO switch */
+//    auto switches = m_switch_manager->switches();
+//    for (auto sw : switches)
+//    {
+        of13::MultipartRequestFlow req;
+        req.out_port(of13::OFPP_ANY);
+        req.out_group(of13::OFPG_ANY);
+        of13::Match match;
+        /* TODO match */
+        req.match(match);
+        pdescr->request(sw->ofconn(), &req);
+//    }
+}
+
+void ControllerDDoSProtection::usersStatisticsArrived(OFConnection *ofconn, std::shared_ptr<OFMsgUnion> reply)
+{
+    auto type = reply->base()->type();
+    if (type != of13::OFPT_MULTIPART_REPLY) {
+        LOG(ERROR) << "Unexpected response of type " << type
+                << " received, expected OFPT_MULTIPART_REPLY";
+        return;
+    }
+
+    of13::MultipartReplyFlow stats = reply->multipartReplyFlow;
+    std::vector<of13::FlowStats> s = stats.flow_stats();
+
+    size_t invalidFlowsNumber = 0;
+    size_t minPacketNumber = 0;
+
+    for (auto& i : s)
+    {
+        uint64_t packetNumber = i.packet_count();
+        minPacketNumber = std::min(packetNumber, minPacketNumber);
+        if (params.isInvalidPacketNumber(packetNumber))
+        {
+            ++invalidFlowsNumber;
+        }
+    }
+    /* TODO */
+}
 
 // ControllerDDoSProtection::Handler
 OFMessageHandler::Action ControllerDDoSProtection::Handler::processMiss(OFConnection* ofconn, Flow* flow)
@@ -51,42 +128,63 @@ OFMessageHandler::Action ControllerDDoSProtection::Handler::processMiss(OFConnec
 
     std::map<IPAddressV4, Users::ValidUsersParams>::iterator validUser;
     std::map<IPAddressV4, Users::InvalidUsersParams>::iterator invalidUser;
-    Users::UsersTypes status = users.get(srcIPAddrV4, validUser, invalidUser);
+    Users::UsersTypes type = users.get(srcIPAddrV4, validUser, invalidUser);
 
-    switch (status)
+    switch (type)
     {
     case Users::UsersTypes::Valid:
-        validUser->second.increaseConnCounter();
-        FlowHandler::setNormalTimeouts(flow);
+        try
+        {
+            validUser->second.increaseConnCounter();
+        }
+        catch (Users::UsersExceptionTypes e)
+        {
+            emit app->UsersTypeChanged(srcIPAddrV4);
+            return Stop;
+        }
+        if (validUser->second.typeIsChecked()) {
+            FlowHandler::setNormalTimeouts(flow);
+        }
+        else
+        {
+            FlowHandler::setShortTimeouts(flow);
+        }
         break;
-        // TODO logics
     case Users::UsersTypes::Invalid:
-        invalidUser->second.increaseConnCounter();
-        FlowHandler::setShortTimeouts(flow);
+        try
+        {
+            invalidUser->second.increaseConnCounter();
+        }
+        catch (Users::UsersExceptionTypes e)
+        {
+            emit app->UsersTypeChanged(srcIPAddrV4);
+        }
+//        Users::InvalidUsersParams::InvalidUsersTypes invalidType = invalidUser->second.getType();
+//        bool invalidTypeIsChecked = invalidUser->second.typeIsChecked();
+        if (isDDoS)
+        {
+            FlowHandler::setShortTimeouts(flow);
+        }
+        /* TODO logic */
+//        else if (invalidType == Users::InvalidUsersParams::InvalidUsersTypes::Malicious)
+//        { }
+        else {
+            FlowHandler::setNormalTimeouts(flow);
+        }
         break;
     case Users::UsersTypes::Unknown:
         users.insert(srcIPAddrV4);
         if (isDDoS)
         {
             FlowHandler::setShortTimeouts(flow);
-        } else
+        }
+        else
         {
             FlowHandler::setNormalTimeouts(flow);
         }
         break;
     }
     return Continue;
-}
-
-void ControllerDDoSProtection::DetectDDoSTimeout()
-{
-    users.update();
-    Users::Statistics statistics = users.getStatistics();
-    bool isDetectedDDoS = statistics.handle();
-    if (isDetectedDDoS) {
-        isDDoS = true;
-    }
-    users.resetStatistics();
 }
 
 
@@ -139,7 +237,7 @@ void ControllerDDoSProtection::Users::update()
 void ControllerDDoSProtection::Users::ValidUsersParams::increaseConnCounter()
 {
     time_t now = time(NULL);
-    size_t numberOfIntervals = (now - updateConnCounterTime) / params.UPDATE_VALID_AVG_CONN_TIMER_INTERVAL;
+    size_t numberOfIntervals = (now - updateConnCounterTime) / UPDATE_VALID_AVG_CONN_TIMER_INTERVAL;
     if (numberOfIntervals > 0)
     {
         if (avgConnNumber != NON_AVG_CONN_NUMBER)
@@ -156,10 +254,11 @@ void ControllerDDoSProtection::Users::ValidUsersParams::increaseConnCounter()
         }
         connCounter = 1;
         updateConnCounterTime = updateConnCounterTime +
-                numberOfIntervals * params.UPDATE_VALID_AVG_CONN_TIMER_INTERVAL;
+                numberOfIntervals * UPDATE_VALID_AVG_CONN_TIMER_INTERVAL;
         return;
     }
     ++connCounter;
+    /* TODO */
 }
 
 
@@ -173,9 +272,9 @@ void ControllerDDoSProtection::Users::InvalidUsersParams::checkType()
         statistics.update(Statistics::Actions::ChangeType, DDoS, Malicious);
     }
     // Malicious -> Valid
-    if (connCounter >= params.validAvgConnNumber.cur)
+    if (params.isInvalidConnNumber(connCounter))
     {
-        isValid(); // TODO
+        throw UsersExceptionTypes::IsValid;
     }
 }
 
@@ -188,12 +287,12 @@ void ControllerDDoSProtection::Users::InvalidUsersParams::increaseConnCounter()
         reset();
         return;
     }
-    if (now - updateConnCounterTime >= params.UPDATE_VALID_AVG_CONN_TIMER_INTERVAL)
+    if (now - updateConnCounterTime >= UPDATE_VALID_AVG_CONN_TIMER_INTERVAL)
     {
         connCounter = 1;
         updateTime = now;
         updateConnCounterTime = updateConnCounterTime +
-                (now - updateConnCounterTime) / params.UPDATE_VALID_AVG_CONN_TIMER_INTERVAL * params.UPDATE_VALID_AVG_CONN_TIMER_INTERVAL;
+                (now - updateConnCounterTime) / UPDATE_VALID_AVG_CONN_TIMER_INTERVAL * UPDATE_VALID_AVG_CONN_TIMER_INTERVAL;
         statistics.update(Statistics::Actions::Update, type, type);
         return;
     }
@@ -235,7 +334,7 @@ void ControllerDDoSProtection::Users::Statistics::update(Actions action,
 
 bool ControllerDDoSProtection::Users::Statistics::handle()
 {
-    // TODO
+    /* TODO */
     return true;
 }
 
