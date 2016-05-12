@@ -63,19 +63,15 @@ void ControllerDDoSProtection::clearInvalidUsersTimeout()
     /* TODO */
 }
 
-void ControllerDDoSProtection::getUsersStatistics (IPAddressV4 ipAddr, Switch* sw)
+void ControllerDDoSProtection::getUsersStatistics (IPAddressV4 ipAddr, OFConnection *ofconn)
 {
-    /* TODO switch */
-//    auto switches = m_switch_manager->switches();
-//    for (auto sw : switches)
-//    {
         of13::MultipartRequestFlow req;
         req.out_port(of13::OFPP_ANY);
         req.out_group(of13::OFPG_ANY);
         of13::Match match;
         /* TODO match */
         req.match(match);
-        pdescr->request(sw->ofconn(), &req);
+        pdescr->request(ofconn, &req);
 //    }
 }
 
@@ -103,7 +99,9 @@ void ControllerDDoSProtection::usersStatisticsArrived(OFConnection *ofconn, std:
             ++invalidFlowsNumber;
         }
     }
-    /* TODO */
+    if (invalidFlowsNumber / (double) s.size() > 0.5) {
+        /* TODO */
+    }
 }
 
 // ControllerDDoSProtection::Handler
@@ -139,7 +137,7 @@ OFMessageHandler::Action ControllerDDoSProtection::Handler::processMiss(OFConnec
         }
         catch (Users::UsersExceptionTypes e)
         {
-            emit app->UsersTypeChanged(srcIPAddrV4);
+            emit app->UsersTypeChanged(srcIPAddrV4, ofconn);
             return Stop;
         }
         if (validUser->second.typeIsChecked()) {
@@ -157,7 +155,7 @@ OFMessageHandler::Action ControllerDDoSProtection::Handler::processMiss(OFConnec
         }
         catch (Users::UsersExceptionTypes e)
         {
-            emit app->UsersTypeChanged(srcIPAddrV4);
+            emit app->UsersTypeChanged(srcIPAddrV4, ofconn);
         }
 //        Users::InvalidUsersParams::InvalidUsersTypes invalidType = invalidUser->second.getType();
 //        bool invalidTypeIsChecked = invalidUser->second.typeIsChecked();

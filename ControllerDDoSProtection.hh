@@ -49,7 +49,6 @@ private:
 
     OFTransaction* pdescr;
 
-
     class Users {
     public:
         enum UsersExceptionTypes {
@@ -225,11 +224,11 @@ private:
         static const uint16_t SHORT_IDLE_TIMEOUT = 10;
     };
 signals:
-    void UsersTypeChanged (IPAddressV4 ipAddr, Switch* sw = NULL);
+    void UsersTypeChanged (IPAddressV4 ipAddr, OFConnection *ofconn);
 private slots:
     void detectDDoSTimeout();
     void updateValidAvgConnTimeout();
     void clearInvalidUsersTimeout();
-    void getUsersStatistics (IPAddressV4 ipAddr, Switch* sw = NULL);
+    void getUsersStatistics (IPAddressV4 ipAddr, OFConnection *ofconn);
     void usersStatisticsArrived (OFConnection* ofconn, std::shared_ptr<OFMsgUnion> reply);
 };
