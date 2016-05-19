@@ -1,5 +1,6 @@
 #include "ControllerDDoSProtection.hh"
 #include "AppObject.hh"
+#include "FluidUtils.hh"
 
 REGISTER_APPLICATION(ControllerDDoSProtection, {"controller", "switch-manager", ""})
 
@@ -12,6 +13,7 @@ ControllerDDoSProtection::Users::Statistics ControllerDDoSProtection::Users::sta
 // ControllerDDoSProtection
 void ControllerDDoSProtection::init(Loader *loader, const Config& config)
 {
+    LOG(INFO) << "ControllerDDoSProtection::init()";
     detectDDoSTimer = new QTimer(this);
     Controller* ctrl = Controller::get(loader);
     ctrl->registerHandler(this);
@@ -39,11 +41,13 @@ void ControllerDDoSProtection::init(Loader *loader, const Config& config)
 
 void ControllerDDoSProtection::startUp(Loader *)
 {
+    LOG(INFO) << "ControllerDDoSProtection::startUp()";
     detectDDoSTimer->start(DETECT_DDOS_TIMER_INTERVAL * 1000);
 }
 
 void ControllerDDoSProtection::detectDDoSTimeout()
 {
+//    LOG(INFO) << "ControllerDDoSProtection::detectDDoSTimeout()";
     users.update();
     Users::Statistics statistics = users.getStatistics();
     bool isDetectedDDoS = statistics.handle();
@@ -55,24 +59,24 @@ void ControllerDDoSProtection::detectDDoSTimeout()
 
 void ControllerDDoSProtection::updateValidAvgConnTimeout()
 {
-    /* TODO */
+    LOG(INFO) << "ControllerDDoSProtection::updateValidAvgConnTimeout()";
+    params.updateValidAvgConnNumber();
 }
 
 void ControllerDDoSProtection::clearInvalidUsersTimeout()
 {
-    /* TODO */
+    LOG(INFO) << "ControllerDDoSProtection::clearInvalidUsersTimeout()";
+    /* todo */
 }
 
 void ControllerDDoSProtection::getUsersStatistics (IPAddressV4 ipAddr, OFConnection *ofconn)
 {
-        of13::MultipartRequestFlow req;
-        req.out_port(of13::OFPP_ANY);
-        req.out_group(of13::OFPG_ANY);
-        of13::Match match;
-        /* TODO match */
-        req.match(match);
-        pdescr->request(ofconn, &req);
-//    }
+    LOG(INFO) << "ControllerDDoSProtection::getUsersStatistics(" << AppObject::uint32_t_ip_to_string(ipAddr) << ")";
+    of13::MultipartRequestFlow req;
+    req.out_port(of13::OFPP_ANY);
+    req.out_group(of13::OFPG_ANY);
+    req.add_oxm_field(new of13::IPv4Src(IPAddress(ipAddr)));
+    pdescr->request(ofconn, &req);
 }
 
 void ControllerDDoSProtection::usersStatisticsArrived(OFConnection *ofconn, std::shared_ptr<OFMsgUnion> reply)
@@ -90,6 +94,14 @@ void ControllerDDoSProtection::usersStatisticsArrived(OFConnection *ofconn, std:
     size_t invalidFlowsNumber = 0;
     size_t minPacketNumber = 0;
 
+    if (s.size() == 0) return;
+
+    of13::Match match = s[0].match();
+    IPAddress ipAddr = s[0].match().ipv4_src()->value();
+    IPAddressV4 ipAddrV4 = ipAddr.getIPv4();
+
+    LOG(INFO) << "ControllerDDoSProtection::usersStatisticsArrived(" << AppObject::uint32_t_ip_to_string(ipAddrV4) << ")";
+
     for (auto& i : s)
     {
         uint64_t packetNumber = i.packet_count();
@@ -99,8 +111,22 @@ void ControllerDDoSProtection::usersStatisticsArrived(OFConnection *ofconn, std:
             ++invalidFlowsNumber;
         }
     }
-    if (invalidFlowsNumber / (double) s.size() > 0.5) {
-        /* TODO */
+    if (invalidFlowsNumber / (float) s.size() > INVALID_FLOW_PERCENT) {
+        std::map<IPAddressV4, Users::ValidUsersParams>::iterator validUser;
+        std::map<IPAddressV4, Users::InvalidUsersParams>::iterator invalidUser;
+        Users::UsersTypes type = users.get(ipAddrV4, validUser, invalidUser);
+        switch (type)
+        {
+        case Users::UsersTypes::Invalid:
+            invalidUser->second.check();
+            break;
+        case Users::UsersTypes::Valid:
+            users.invalidate(validUser);
+            break;
+        case Users::UsersTypes::Unknown:
+            throw Users::UsersExceptionTypes::IsUnknown;
+        }
+        detectDDoSTimeout();
     }
 }
 
@@ -122,6 +148,7 @@ OFMessageHandler::Action ControllerDDoSProtection::Handler::processMiss(OFConnec
         return Continue;
     }
 
+    LOG(INFO) << "ControllerDDoSProtection::Handler::processMiss()";
     LOG(INFO) << AppObject::uint32_t_ip_to_string(srcIPAddrV4) << "\t-->\t" <<AppObject::uint32_t_ip_to_string(dstIPAddrV4);
 
     std::map<IPAddressV4, Users::ValidUsersParams>::iterator validUser;
@@ -138,9 +165,10 @@ OFMessageHandler::Action ControllerDDoSProtection::Handler::processMiss(OFConnec
         catch (Users::UsersExceptionTypes e)
         {
             emit app->UsersTypeChanged(srcIPAddrV4, ofconn);
-            return Stop;
+//            return Stop;
         }
-        if (validUser->second.typeIsChecked()) {
+        if (validUser->second.typeIsChecked())
+        {
             FlowHandler::setNormalTimeouts(flow);
         }
         else
@@ -149,6 +177,7 @@ OFMessageHandler::Action ControllerDDoSProtection::Handler::processMiss(OFConnec
         }
         break;
     case Users::UsersTypes::Invalid:
+    {
         try
         {
             invalidUser->second.increaseConnCounter();
@@ -157,19 +186,24 @@ OFMessageHandler::Action ControllerDDoSProtection::Handler::processMiss(OFConnec
         {
             emit app->UsersTypeChanged(srcIPAddrV4, ofconn);
         }
-//        Users::InvalidUsersParams::InvalidUsersTypes invalidType = invalidUser->second.getType();
-//        bool invalidTypeIsChecked = invalidUser->second.typeIsChecked();
+        Users::InvalidUsersParams::InvalidUsersTypes invalidType = (invalidUser->second).getType();
+        bool invalidTypeIsChecked = (invalidUser->second).typeIsChecked();
+        if (invalidType == Users::InvalidUsersParams::InvalidUsersTypes::Malicious
+                && invalidTypeIsChecked == 1)
+        {
+            flow->setFlags(Flow::Disposable);
+            return Stop;
+        }
         if (isDDoS)
         {
             FlowHandler::setShortTimeouts(flow);
         }
-        /* TODO logic */
-//        else if (invalidType == Users::InvalidUsersParams::InvalidUsersTypes::Malicious)
-//        { }
-        else {
+        else
+        {
             FlowHandler::setNormalTimeouts(flow);
         }
         break;
+    }
     case Users::UsersTypes::Unknown:
         users.insert(srcIPAddrV4);
         if (isDDoS)
@@ -192,6 +226,7 @@ ControllerDDoSProtection::Users::get (IPAddressV4 ipAddr,
                                       std::map<IPAddressV4, ValidUsersParams>::iterator &validUser,
                                       std::map<IPAddressV4, InvalidUsersParams>::iterator &invalidUser)
 {
+    LOG(INFO) << "ControllerDDoSProtection::Users::get(" << AppObject::uint32_t_ip_to_string(ipAddr) << ")";
     std::map<IPAddressV4, ValidUsersParams>::iterator itValidUser = validUsers.find(ipAddr);
     if (itValidUser != validUsers.end())
     {
@@ -211,11 +246,22 @@ ControllerDDoSProtection::Users::get (IPAddressV4 ipAddr,
 
 void ControllerDDoSProtection::Users::insert (IPAddressV4 ipAddr)
 {
+    LOG(INFO) << "ControllerDDoSProtection::Users::insert(" << AppObject::uint32_t_ip_to_string(ipAddr) << ")";
     InvalidUsersParams invalidUsersParams;
     invalidUsers.insert (std::pair <IPAddressV4, InvalidUsersParams> (ipAddr, invalidUsersParams));
     statistics.update(Statistics::Actions::Insert,
                       InvalidUsersParams::InvalidUsersTypes::None,
                       InvalidUsersParams::InvalidUsersTypes::DDoS);
+}
+
+void ControllerDDoSProtection::Users::invalidate(std::map<IPAddressV4, ValidUsersParams>::iterator it)
+{
+    InvalidUsersParams invalidUsersParams(it->second);
+    invalidUsers.insert(std::pair <IPAddressV4, InvalidUsersParams> (it->first, invalidUsersParams));
+    validUsers.erase(it);
+    statistics.update(Statistics::Actions::Insert,
+                      InvalidUsersParams::InvalidUsersTypes::None,
+                      InvalidUsersParams::InvalidUsersTypes::Malicious);
 }
 
 void ControllerDDoSProtection::Users::update()
@@ -232,6 +278,17 @@ void ControllerDDoSProtection::Users::update()
 
 
 // ControllerDDoSProtection::Users::ValidUsersParams
+void ControllerDDoSProtection::Users::ValidUsersParams::checkType()
+{
+    // Valid -> Malicious
+    if (params.isInvalidConnNumber(connCounter)
+            || (int)connCounter > avgConnNumber)
+    {
+        statistics.update(Statistics::Actions::ChangeType, InvalidUsersParams::None, InvalidUsersParams::Malicious);
+        throw UsersExceptionTypes::IsValid;
+    }
+}
+
 void ControllerDDoSProtection::Users::ValidUsersParams::increaseConnCounter()
 {
     time_t now = time(NULL);
@@ -256,7 +313,7 @@ void ControllerDDoSProtection::Users::ValidUsersParams::increaseConnCounter()
         return;
     }
     ++connCounter;
-    /* TODO */
+    checkType();
 }
 
 
@@ -272,6 +329,7 @@ void ControllerDDoSProtection::Users::InvalidUsersParams::checkType()
     // Malicious -> Valid
     if (params.isInvalidConnNumber(connCounter))
     {
+        statistics.update(Statistics::Actions::ChangeType, Malicious, None);
         throw UsersExceptionTypes::IsValid;
     }
 }
@@ -332,8 +390,46 @@ void ControllerDDoSProtection::Users::Statistics::update(Actions action,
 
 bool ControllerDDoSProtection::Users::Statistics::handle()
 {
-    /* TODO */
-    return true;
+    size_t weight = 0;
+    /* Invalid Malicious Users Params */
+    if (invalidMaliciousUsersParams.checkedNumber >= INVALID_MALICIOUS_USERS_CHECKED_NUMBER)
+    {
+        weight += INVALID_MALICIOUS_USERS_CHECKED_NUMBER_WEIGHT;
+    }
+    UsersParams::NumberOfActions invalidMaliciousUsersNumberOfChanges = invalidMaliciousUsersParams.getNumberOfChanges();
+    if (invalidMaliciousUsersNumberOfChanges.changeType >= INVALID_MALICIOUS_USERS_NUMBER_OF_CHANGE_TYPE)
+    {
+        weight += INVALID_MALICIOUS_USERS_NUMBER_OF_CHANGE_TYPE_WEIGHT;
+    }
+
+    /* Invalid DDoS Users Params */
+    size_t invalidDDoSUsersNumber = invalidDDoSUsersParams.number;
+    UsersParams::NumberOfActions invalidDDoSUsersNumberOfChanges = invalidDDoSUsersParams.getNumberOfChanges();
+    size_t invalidDDoSUsersNumberOfInsert = invalidDDoSUsersNumberOfChanges.insert;
+    if (!isStable &&
+            invalidDDoSUsersNumberOfInsert / (float) invalidDDoSUsersNumber < IS_STABLE_CRITERIA)
+    {
+        isStable = true;
+    }
+    if (isStable && invalidDDoSUsersParams.number > INVALID_DDOS_USERS_NUMBER)
+    {
+        weight += INVALID_DDOS_USERS_NUMBER_WEIGHT;
+    }
+    if (isStable && invalidDDoSUsersNumberOfInsert > INVALID_DDOS_USERS_NUMBER_OF_INSERT)
+    {
+        weight += INVALID_DDOS_USERS_NUMBER_OF_INSERT_WEIGHT;
+    }
+    if (isStable &&
+            invalidDDoSUsersNumberOfChanges.changeType / (float) invalidDDoSUsersNumber < INVALID_DDOS_USERS_NUMBER_OF_CHANGE_TYPE_NUMBER)
+    {
+        weight += INVALID_DDOS_USERS_NUMBER_OF_CHANGE_TYPE_NUMBER_WEIGHT;
+    }
+
+    if (weight >= IS_DDOS_WEIGHT)
+    {
+        return true;
+    }
+    return false;
 }
 
 
@@ -380,16 +476,41 @@ void ControllerDDoSProtection::Params::init()
     validPacketNumber.cur = (VALID_PACKET_NUMBER_MIN + VALID_PACKET_NUMBER_MAX) / 2;
 }
 
+void ControllerDDoSProtection::Params::updateValidAvgConnNumber()
+{
+    size_t avgConnNumber = 0;
+    for (auto it = users.validUsers.begin(), end = users.validUsers.end(); it != end; ++it)
+    {
+        avgConnNumber += it->second.avgConnNumber;
+    }
+    avgConnNumber = avgConnNumber / (float) users.validUsers.size() + .5;
+
+    validAvgConnNumber.cur = validateValidAvgConnNumber(avgConnNumber);
+}
+
+size_t ControllerDDoSProtection::Params::validateValidAvgConnNumber(size_t validAvgConnNumber_)
+{
+    LOG(INFO) << "ControllerDDoSProtectionParams::validateValidAvgConnNumber()";
+    if (validAvgConnNumber_ > validAvgConnNumber.min && validAvgConnNumber_ < validAvgConnNumber.max)
+    {
+        return validAvgConnNumber_;
+    }
+    LOG(WARNING) << "Update of Valid Average Connection Number is failed: validAvgConnNumber = " << validAvgConnNumber_;
+    return validAvgConnNumber.cur;
+}
+
 
 // ControllerDDoSProtection::FlowHandler
 void ControllerDDoSProtection::FlowHandler::setNormalTimeouts (Flow *flow)
 {
+    LOG(INFO) << "ControllerDDoSProtection::FlowHandler::setNormalTimeouts()";
     flow->idleTimeout(NORMAL_IDLE_TIMEOUT);
     flow->timeToLive(NORMAL_HARD_TIMEOUT);
 }
 
 void ControllerDDoSProtection::FlowHandler::setShortTimeouts(Flow *flow)
 {
+    LOG(INFO) << "ControllerDDoSProtection::FlowHandler::setShortTimeouts()";
     flow->idleTimeout(SHORT_IDLE_TIMEOUT);
     flow->timeToLive(SHORT_HARD_TIMEOUT);
 }
