@@ -47,6 +47,8 @@ void ControllerDDoSProtection::init(Loader *loader, const Config& config)
 {
     LOG(INFO) << "ControllerDDoSProtection::init()";
     detectDDoSTimer = new QTimer(this);
+    updateValidAvgConnTimer = new QTimer(this);
+    clearInvalidUsersTimer = new QTimer(this);
     Controller* ctrl = Controller::get(loader);
     ctrl->registerHandler("ddos-protection",
         [=](SwitchConnectionPtr conn)
