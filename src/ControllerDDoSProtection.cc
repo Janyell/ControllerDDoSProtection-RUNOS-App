@@ -267,9 +267,19 @@ Decision ControllerDDoSProtection::processMiss (SwitchConnectionPtr conn, IPAddr
 
 
 void ControllerDDoSProtection::flowRemoved (SwitchConnectionPtr conn, of13::FlowRemoved fr) {
+    LOG(INFO) << "ControllerDDoSProtection::flowRemoved()";
     Dpid dpid = conn->dpid();
-    InPortI in_port = fr.match().in_port()->value();
+    LOG(INFO) << "dpid = " << dpid;
+    of13::InPort* in_port_ptr = fr.match().in_port();
+    if (in_port_ptr == NULL)
+    {
+        LOG(WARNING) << "Cannot get IN_PORT from Flow Removed Message";
+        return;
+    }
+    InPort in_port = in_port_ptr ->value();
+    LOG(INFO) << "in_port = " << in_port;
     uint64_t packet_count = fr.packet_count();
+    LOG(INFO) << "packet_count = " << packet_count;
     SPRTdetection::InPortTypes in_port_type = detection.isCompromisedInPort(dpid, in_port, packet_count, params.getValidPacketNumber().cur);
     if (in_port_type == SPRTdetection::InPortTypes::Compromised)
     {
@@ -285,7 +295,7 @@ bool ControllerDDoSProtection::SPRTdetection::isDDoS() {
 
 
 ControllerDDoSProtection::SPRTdetection::InPortTypes
-ControllerDDoSProtection::SPRTdetection::isCompromisedInPort (Dpid dpid, InPortI in_port, uint64_t packet_count, size_t packet_count_max)
+ControllerDDoSProtection::SPRTdetection::isCompromisedInPort (Dpid dpid, InPort in_port, uint64_t packet_count, size_t packet_count_max)
 {
     Imap::iterator dn;
     getDi(dpid, in_port, dn);
@@ -307,7 +317,7 @@ ControllerDDoSProtection::SPRTdetection::checkDin (Imap::iterator& dn)
 }
 
 
-bool ControllerDDoSProtection::SPRTdetection::getDi (Dpid dpid, InPortI i, Imap::iterator& dn)
+bool ControllerDDoSProtection::SPRTdetection::getDi (Dpid dpid, InPort i, Imap::iterator& dn)
 {
     Dmap::iterator di;
     if (searchDpid(dpid, di))
@@ -337,7 +347,7 @@ bool ControllerDDoSProtection::SPRTdetection::searchDpid (Dpid dpid, Dmap::itera
 }
 
 
-bool ControllerDDoSProtection::SPRTdetection::searchInPort (InPortI i, Dmap::iterator di, Imap::iterator& dn)
+bool ControllerDDoSProtection::SPRTdetection::searchInPort (InPort i, Dmap::iterator di, Imap::iterator& dn)
 {
     Imap::iterator it = di->second.find(i);
     if (it != di->second.end())
@@ -358,10 +368,10 @@ bool ControllerDDoSProtection::SPRTdetection::insertDpid (Dpid dpid, Dmap::itera
 }
 
 
-bool ControllerDDoSProtection::SPRTdetection::insertInPort(InPortI i, Dmap::iterator di, Imap::iterator& dn)
+bool ControllerDDoSProtection::SPRTdetection::insertInPort(InPort i, Dmap::iterator di, Imap::iterator& dn)
 {
     Dn d0;
-    std::pair<Imap::iterator, bool> ret = di->second.insert(std::pair<InPortI, Dn>(i, d0));
+    std::pair<Imap::iterator, bool> ret = di->second.insert(std::pair<InPort, Dn>(i, d0));
     dn = ret.first;
     return ret.second;
 }

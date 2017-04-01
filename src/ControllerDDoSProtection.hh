@@ -21,7 +21,7 @@ Q_OBJECT
 public:
     typedef uint32_t IPAddressV4;
     typedef uint64_t Dpid;
-    typedef uint32_t InPortI; /* uint8_t - packed size */
+    typedef uint32_t InPort; /* uint8_t - packed size */
 
     void init (Loader* loader, const Config& config) override;
     void startUp (Loader* loader) override;
@@ -56,7 +56,7 @@ private:
             size_t ip_count;
             Dn (size_t n_ = 0, double din_ = 1.0, size_t ip_count_ = 0) : n(n_), din(din_), ip_count(ip_count_) {}
         };
-        typedef std::map<InPortI, Dn> Imap;
+        typedef std::map<InPort, Dn> Imap;
         typedef std::map<Dpid, Imap> Dmap;
 
         enum InPortTypes {
@@ -67,7 +67,7 @@ private:
 
         SPRTdetection (): a(countA()), b(countB()) {}
         bool isDDoS();
-        InPortTypes isCompromisedInPort (Dpid dpid, InPortI in_port, uint64_t packet_count, size_t packet_count_max = C_MAX);
+        InPortTypes isCompromisedInPort (Dpid dpid, InPort in_port, uint64_t packet_count, size_t packet_count_max = C_MAX);
 
         struct SPRTconfig {
             const double alpha;
@@ -103,11 +103,11 @@ private:
         double countB() { return (1 - config.beta) / config.alpha; }
         InPortTypes checkDin (Imap::iterator& dn);
 
-        bool getDi (Dpid dpid, InPortI i, Imap::iterator& dn);
+        bool getDi (Dpid dpid, InPort i, Imap::iterator& dn);
         bool searchDpid (Dpid dpid, Dmap::iterator& di);
-        bool searchInPort (InPortI i, Dmap::iterator di, Imap::iterator& dn);
+        bool searchInPort (InPort i, Dmap::iterator di, Imap::iterator& dn);
         bool insertDpid (Dpid dpid, Dmap::iterator& di);
-        bool insertInPort(InPortI i, Dmap::iterator di, Imap::iterator& dn);
+        bool insertInPort(InPort i, Dmap::iterator di, Imap::iterator& dn);
 
         static const size_t C_MAX = 3;
 
