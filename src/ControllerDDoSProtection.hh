@@ -6,6 +6,7 @@
 #include "Application.hh"
 #include "Loader.hh"
 #include "Switch.hh"
+#include "HostManager.hh"
 
 #include "ddos/Users.hh"
 #include "ddos/Params.hh"
@@ -42,6 +43,7 @@ private:
     static constexpr double INVALID_FLOW_PERCENT = 0.1;
 
     OFTransaction* oftran;
+    HostManager* host_manager;
 
     static Users users;
     static Params params;

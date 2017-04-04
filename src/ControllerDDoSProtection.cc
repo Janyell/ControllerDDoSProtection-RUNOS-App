@@ -46,10 +46,15 @@ const uint16_t DecisionHandler::SHORT_IDLE_TIMEOUT = 10;
 void ControllerDDoSProtection::init(Loader *loader, const Config& config)
 {
     LOG(INFO) << "ControllerDDoSProtection::init()";
+
+    qRegisterMetaType<IPAddressV4>("IPAddressV4");
+
     detectDDoSTimer = new QTimer(this);
     updateValidAvgConnTimer = new QTimer(this);
     clearInvalidUsersTimer = new QTimer(this);
+
     Controller* ctrl = Controller::get(loader);
+    host_manager = HostManager::get(loader);
     ctrl->registerHandler("ddos-protection",
         [=](SwitchConnectionPtr conn)
         {
@@ -59,18 +64,15 @@ void ControllerDDoSProtection::init(Loader *loader, const Config& config)
 
             return [=](Packet& pkt, FlowPtr, Decision decision) mutable
             {
+                auto tpkt = packet_cast<TraceablePacket>(pkt);
                 if (pkt.test(ofb_eth_type == IPv4_TYPE)) {
-                    IPv4Addr srcIPAddr = pkt.load(ofb_ipv4_src);
+                    IPv4Addr srcIPAddr = tpkt.watch(ofb_ipv4_src);
                     IPAddressV4 srcIPAddrV4 = srcIPAddr.to_number();
 
-                    IPv4Addr dstIPAddr = pkt.load(ofb_ipv4_dst);
+                    IPv4Addr dstIPAddr = tpkt.watch(ofb_ipv4_dst);
                     IPAddressV4 dstIPAddrV4 = dstIPAddr.to_number();
 
-                    if (srcIPAddrV4 == IPAddress("0.0.0.0").getIPv4() || dstIPAddrV4 == IPAddress("0.0.0.0").getIPv4())
-                    {
-                        return decision;
-                    }
-
+                    LOG(INFO) << "processMiss";
                     LOG(INFO) << AppObject::uint32_t_ip_to_string(srcIPAddrV4) << "\t-->\t" <<AppObject::uint32_t_ip_to_string(dstIPAddrV4);
 
                     return processMiss(conn, srcIPAddrV4, decision);
@@ -123,7 +125,8 @@ void ControllerDDoSProtection::detectDDoSTimeout()
     users.update();
     Users::Statistics statistics = users.getStatistics();
     bool isDetectedDDoS = statistics.handle();
-    if (isDetectedDDoS) {
+    if (isDetectedDDoS)
+    {
         isDDoS = true;
     }
     users.resetStatistics();
@@ -151,8 +154,16 @@ void ControllerDDoSProtection::getUsersStatistics (SwitchConnectionPtr conn, IPA
     mprf.table_id(of13::OFPTT_ALL);
     mprf.out_port(of13::OFPP_ANY);
     mprf.out_group(of13::OFPG_ANY);
-    mprf.add_oxm_field(new of13::IPv4Src(IPAddress(ipAddr)));
-    mprf.cookie(0x0);
+//    of13::IPv4Src* oxm = new of13::IPv4Src(ipAddr);
+    Host* host = host_manager->getHost(ipAddr);
+    if (host == nullptr)
+    {
+        LOG(WARNING) << "Cannot get host by IP: " << AppObject::uint32_t_ip_to_string(ipAddr) << " from HostManager";
+        return;
+    }
+    of13::EthSrc* oxm = new of13::EthSrc(host->mac());
+    mprf.add_oxm_field(oxm);
+    mprf.cookie(0x0);  // match: cookie & mask == field.cookie & mask
     mprf.cookie_mask(0x0);
     mprf.flags(0);
     oftran->request(conn, mprf);
@@ -162,7 +173,8 @@ void ControllerDDoSProtection::getUsersStatistics (SwitchConnectionPtr conn, IPA
 void ControllerDDoSProtection::usersStatisticsArrived(SwitchConnectionPtr conn, std::shared_ptr<OFMsgUnion> reply)
 {
     auto type = reply->base()->type();
-    if (type != of13::OFPT_MULTIPART_REPLY) {
+    if (type != of13::OFPT_MULTIPART_REPLY)
+    {
         LOG(ERROR) << "Unexpected response of type " << type
                 << " received, expected OFPT_MULTIPART_REPLY";
         return;
@@ -176,8 +188,23 @@ void ControllerDDoSProtection::usersStatisticsArrived(SwitchConnectionPtr conn, 
 
     if (s.size() == 0) return;
 
-//    of13::Match match = s[0].match();
-    IPAddress ipAddr = s[0].match().ipv4_src()->value();
+//    of13::IPv4Src* addrPtr = s[0].match().ipv4_src();
+    of13::EthSrc* addrPtr = s[0].match().eth_src();
+    if (addrPtr == nullptr)
+    {
+        LOG(WARNING) << "Cannot get ETH_SRC from Multipart Reply Message";
+        return;
+    }
+
+    EthAddress ethAddr = addrPtr->value();
+    Host* host = host_manager->getHost(ethAddr.to_string());
+    if (host == nullptr)
+    {
+        LOG(WARNING) << "Cannot get host by MAC: " << ethAddr.to_string() << " from HostManager";
+        return;
+    }
+
+    IPAddress ipAddr = host->ip();
     IPAddressV4 ipAddrV4 = ipAddr.getIPv4();
 
     LOG(INFO) << "ControllerDDoSProtection::usersStatisticsArrived(" << AppObject::uint32_t_ip_to_string(ipAddrV4) << ")";
@@ -217,9 +244,12 @@ Decision ControllerDDoSProtection::processMiss (SwitchConnectionPtr conn, IPAddr
     std::map<IPAddressV4, Users::InvalidUsersParams>::iterator invalidUser;
     Users::UsersTypes type = users.get(ipAddr, validUser, invalidUser);
 
+    LOG(INFO) << "ControllerDDoSProtection::processMiss";
+
     switch (type)
     {
     case Users::UsersTypes::Valid:
+        LOG(INFO) << "Users::UsersTypes::Valid";
         try
         {
             (validUser->second).increaseConnCounter(params);
@@ -234,6 +264,7 @@ Decision ControllerDDoSProtection::processMiss (SwitchConnectionPtr conn, IPAddr
         break;
     case Users::UsersTypes::Invalid:
     {
+        LOG(INFO) << "Users::UsersTypes::Invalid";
         try
         {
             invalidUser->second.increaseConnCounter(params);
@@ -258,6 +289,7 @@ Decision ControllerDDoSProtection::processMiss (SwitchConnectionPtr conn, IPAddr
         break;
     }
     case Users::UsersTypes::Unknown:
+        LOG(INFO) << "Users::UsersTypes::Unknown";
         users.insert(ipAddr);
         decision = isDDoS ? DecisionHandler::setShortTimeouts(decision) : DecisionHandler::setNormalTimeouts(decision);
         break;
@@ -270,16 +302,16 @@ void ControllerDDoSProtection::flowRemoved (SwitchConnectionPtr conn, of13::Flow
     LOG(INFO) << "ControllerDDoSProtection::flowRemoved()";
     Dpid dpid = conn->dpid();
     LOG(INFO) << "dpid = " << dpid;
+    uint64_t packet_count = fr.packet_count();
+    LOG(INFO) << "packet_count = " << packet_countl
     of13::InPort* in_port_ptr = fr.match().in_port();
-    if (in_port_ptr == NULL)
+    if (in_port_ptr == nullptr)
     {
         LOG(WARNING) << "Cannot get IN_PORT from Flow Removed Message";
         return;
     }
-    InPort in_port = in_port_ptr ->value();
+    InPort in_port = in_port_ptr->value();
     LOG(INFO) << "in_port = " << in_port;
-    uint64_t packet_count = fr.packet_count();
-    LOG(INFO) << "packet_count = " << packet_count;
     SPRTdetection::InPortTypes in_port_type = detection.isCompromisedInPort(dpid, in_port, packet_count, params.getValidPacketNumber().cur);
     if (in_port_type == SPRTdetection::InPortTypes::Compromised)
     {
