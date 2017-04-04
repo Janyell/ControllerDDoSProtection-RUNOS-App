@@ -303,15 +303,34 @@ void ControllerDDoSProtection::flowRemoved (SwitchConnectionPtr conn, of13::Flow
     Dpid dpid = conn->dpid();
     LOG(INFO) << "dpid = " << dpid;
     uint64_t packet_count = fr.packet_count();
-    LOG(INFO) << "packet_count = " << packet_countl
+    LOG(INFO) << "packet_count = " << packet_count;
+
     of13::InPort* in_port_ptr = fr.match().in_port();
+    InPort in_port;
     if (in_port_ptr == nullptr)
     {
         LOG(WARNING) << "Cannot get IN_PORT from Flow Removed Message";
-        return;
+        of13::EthSrc* eth_addr_ptr = fr.match().eth_src();
+        if (eth_addr_ptr == nullptr)
+        {
+            LOG(WARNING) << "Cannot get ETH_SRC from Flow Removed Message";
+            return;
+        }
+
+        EthAddress eth_addr = eth_addr_ptr->value();
+        Host* host = host_manager->getHost(eth_addr.to_string());
+        if (host == nullptr)
+        {
+            LOG(WARNING) << "Cannot get host by MAC: " << eth_addr.to_string() << " from HostManager";
+            return;
+        }
+
+        in_port = host->switchPort();
+    } else {
+        in_port = in_port_ptr->value();
     }
-    InPort in_port = in_port_ptr->value();
     LOG(INFO) << "in_port = " << in_port;
+
     SPRTdetection::InPortTypes in_port_type = detection.isCompromisedInPort(dpid, in_port, packet_count, params.getValidPacketNumber().cur);
     if (in_port_type == SPRTdetection::InPortTypes::Compromised)
     {
