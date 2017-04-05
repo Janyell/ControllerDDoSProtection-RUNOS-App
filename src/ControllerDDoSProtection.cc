@@ -149,7 +149,7 @@ void ControllerDDoSProtection::clearInvalidUsersTimeout()
 
 void ControllerDDoSProtection::getUsersStatistics (SwitchConnectionPtr conn, IPAddressV4 ipAddr)
 {
-    LOG(INFO) << "ControllerDDoSProtection::getUsersStatistics(" << AppObject::uint32_t_ip_to_string(ipAddr) << ")";
+    LOG(INFO) << "ControllerDDoSProtection::getUsersStatistics (" << AppObject::uint32_t_ip_to_string(ipAddr) << ")";
     of13::MultipartRequestFlow mprf;
     mprf.table_id(of13::OFPTT_ALL);
     mprf.out_port(of13::OFPP_ANY);
@@ -207,7 +207,7 @@ void ControllerDDoSProtection::usersStatisticsArrived(SwitchConnectionPtr conn, 
     IPAddress ipAddr = host->ip();
     IPAddressV4 ipAddrV4 = ipAddr.getIPv4();
 
-    LOG(INFO) << "ControllerDDoSProtection::usersStatisticsArrived(" << AppObject::uint32_t_ip_to_string(ipAddrV4) << ")";
+    LOG(INFO) << "ControllerDDoSProtection::usersStatisticsArrived (" << AppObject::uint32_t_ip_to_string(ipAddrV4) << ")";
 
     for (auto& i : s)
     {
@@ -240,11 +240,13 @@ void ControllerDDoSProtection::usersStatisticsArrived(SwitchConnectionPtr conn, 
 
 Decision ControllerDDoSProtection::processMiss (SwitchConnectionPtr conn, IPAddressV4 ipAddr, Decision decision)
 {
+    params.print();
+
     std::map<IPAddressV4, Users::ValidUsersParams>::iterator validUser;
     std::map<IPAddressV4, Users::InvalidUsersParams>::iterator invalidUser;
     Users::UsersTypes type = users.get(ipAddr, validUser, invalidUser);
 
-    LOG(INFO) << "ControllerDDoSProtection::processMiss";
+    LOG(INFO) << "ControllerDDoSProtection::processMiss (" << AppObject::uint32_t_ip_to_string(ipAddr) << ")";
 
     switch (type)
     {
@@ -256,9 +258,12 @@ Decision ControllerDDoSProtection::processMiss (SwitchConnectionPtr conn, IPAddr
         }
         catch (Users::UsersExceptionTypes)
         {
-            // Valid -> Valid or Malicious
+            LOG(INFO) << "Valid --> Valid or Malicious";
             emit UsersTypeChanged(conn, ipAddr);
         }
+
+        validUser->second.print();
+
         decision = (validUser->second).typeIsChecked() ? DecisionHandler::setNormalTimeouts(decision) :
                                                          DecisionHandler::setShortTimeouts(decision);
         break;
@@ -271,9 +276,12 @@ Decision ControllerDDoSProtection::processMiss (SwitchConnectionPtr conn, IPAddr
         }
         catch (Users::UsersExceptionTypes)
         {
-            // Malicious -> Valid or Malicious
+            LOG(INFO) << "Malicious --> Valid or Malicious";
             emit UsersTypeChanged(conn, ipAddr);
         }
+
+        invalidUser->second.print();
+
         Users::InvalidUsersParams::InvalidUsersTypes invalidType = (invalidUser->second).getType();
         bool invalidTypeIsChecked = (invalidUser->second).typeIsChecked();
         if (invalidType == Users::InvalidUsersParams::InvalidUsersTypes::Malicious

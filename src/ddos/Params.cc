@@ -40,6 +40,12 @@ size_t Params::validateValidAvgConnNumber(size_t validAvgConnNumber_)
 void Params::countK1K2()
 {
     size_t j = countJ();
-    validAvgConnNumber.k1 = validAvgConnNumber.cur + (j/2 + 1/2);
-    validAvgConnNumber.k2 = validAvgConnNumber.cur - (j/2 + 1/2);
+    validAvgConnNumber.k1 = validAvgConnNumber.cur - (j/2 + 1/2);
+    validAvgConnNumber.k2 = validAvgConnNumber.cur + (j/2 + 1/2);
+}
+
+void Params::print()
+{
+    LOG(INFO) << "k:\t" << validAvgConnNumber.k1 << "\t" << validAvgConnNumber.cur << "\t" << validAvgConnNumber.k2;
+    LOG(INFO) << "n:\t" << validPacketNumber.cur;
 }

@@ -1,5 +1,7 @@
 #include "Users.hh"
 
+#include <glog/logging.h>
+
 Users::Statistics Users::statistics;
 
 Users::UsersTypes
@@ -61,7 +63,7 @@ void Users::update()
 // Users::ValidUsersParams
 void Users::ValidUsersParams::checkType (const Params& params)
 {
-    // Valid -> Valid or Malicious
+    // Valid --> Malicious
     if (params.isInvalidConnNumber(connCounter)
             || (int)connCounter > avgConnNumber)
     {
@@ -101,14 +103,14 @@ void Users::ValidUsersParams::increaseConnCounter (const Params& params)
 // Users::InvalidUsersParams
 void Users::InvalidUsersParams::checkType(const Params& params)
 {
-    // DDoS -> Malicious
+    // DDoS --> Malicious
     if (type == DDoS && connCounter >= INVALID_DDOS_AVG_CONN_NUMBER)
     {
         type = Malicious;
         statistics.update(Statistics::Actions::ChangeType, DDoS, Malicious);
     }
-    // Malicious -> Valid
-    if (params.isInvalidConnNumber(connCounter))
+    // Malicious --> Valid
+    if (params.isValidConnNumber(connCounter))
     {
         statistics.update(Statistics::Actions::ChangeType, Malicious, None);
         throw UsersExceptionTypes::IsValid;
@@ -241,4 +243,19 @@ void Users::Statistics::UsersParams::updateNumbers(Actions action)
 //        LOG(ERROR) << "Invalid Statistics::Actions!";
         break;
     }
+}
+
+void Users::ValidUsersParams::print()
+{
+    LOG(INFO) << "IsChecked:\t" << isChecked;
+    LOG(INFO) << "ConnCounter:\t" << connCounter;
+    LOG(INFO) << "AvgConnNumber:\t" << avgConnNumber;
+    LOG(INFO) << "UpdateConnCounterTime:\t" << updateConnCounterTime;
+}
+
+void Users::InvalidUsersParams::print()
+{
+    LOG(INFO) << "IsChecked:\t" << isChecked;
+    LOG(INFO) << "ConnCounter:\t" << connCounter;
+    LOG(INFO) << "UpdateConnCounterTime:\t" << updateConnCounterTime;
 }

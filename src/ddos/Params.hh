@@ -1,8 +1,10 @@
 #pragma once
 
-#include <stddef.h>
-#include <time.h>
-#include <math.h>
+#include <cstddef>
+#include <ctime>
+#include <cmath>
+
+#include <glog/logging.h>
 
 class Users;
 
@@ -19,11 +21,18 @@ public:
     };
     Params (double x_ = X): x(x_) {}
     void init();
-    inline bool isInvalidConnNumber (size_t connNumber) const { return connNumber < validAvgConnNumber.k1 || connNumber > validAvgConnNumber.k2; }
+
+    // --> Malicious
+    inline bool isInvalidConnNumber (size_t connNumber) const { return connNumber >= validAvgConnNumber.k2; }
+
+    // --> Valid
+    inline bool isValidConnNumber (size_t connNumber) const { return connNumber >= validAvgConnNumber.k1; }
+
     inline bool isInvalidPacketNumber (size_t packetNumber) const { return packetNumber < validPacketNumber.cur; }
     void updateValidAvgConnNumber (const Users& users);
     size_t validateValidAvgConnNumber (size_t validAvgConnNumber_);
     DynamicNumbers getValidPacketNumber() { return validPacketNumber; }
+    void print();
 
 private:
     void countK1K2();
@@ -31,8 +40,8 @@ private:
     {
         // x = sum(j = 0; j < 2i; ++j) (e^(-lambda) * lambda^j / j!)
         size_t j = 0;
-        size_t lambda = validAvgConnNumber.cur;
-        double y = x / exp(-lambda);
+        double lambda = validAvgConnNumber.cur;
+        double y = x / std::exp(-lambda);
         for (double ret = poisscdf(j, lambda), sum = ret; sum < y ; ++j)
         {
             ret = poisscdf(j, lambda, ret);
@@ -41,7 +50,7 @@ private:
         return j;
     }
 
-    double poisscdf (size_t j, size_t lambda, double ret_j_1 = 1.0)
+    double poisscdf (size_t j, double lambda, double ret_j_1 = 1.0)
     {
         // ret_j-1 = lambda^(j-1) / (j - 1)!
         return ret_j_1 * lambda / factorial(j);

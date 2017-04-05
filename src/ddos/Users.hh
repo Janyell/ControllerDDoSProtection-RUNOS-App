@@ -33,6 +33,8 @@ public:
         void increaseConnCounter (const Params& params);
         bool typeIsChecked() { return isChecked; }
         size_t getConnCounter() { return connCounter; }
+        void print();
+
     private:
         void checkType (const Params& params);
         bool isChecked;
@@ -75,6 +77,9 @@ public:
         InvalidUsersTypes getType() { return type; }
         bool typeIsChecked() { return isChecked; }
         void check() { isChecked = true; }
+        size_t getConnCounter() { return connCounter; }
+        void print();
+
     private:
         void checkType (const Params& params);
         void reset (time_t _hardTimeout = HARD_TIMEOUT,

@@ -1,7 +1,7 @@
 #pragma once
 
 #include <mutex>
-#include <math.h>
+#include <cmath>
 
 #include "Application.hh"
 #include "Loader.hh"
@@ -48,7 +48,6 @@ private:
     static Users users;
     static Params params;
 
-
     // Detection using SPRT
     class SPRTdetection {
     public:
@@ -84,7 +83,6 @@ private:
             static constexpr double LAMBDA_0 = 0.33;
             static constexpr double LAMBDA_1 = 0.6;
         };
-
 
 
     private:
