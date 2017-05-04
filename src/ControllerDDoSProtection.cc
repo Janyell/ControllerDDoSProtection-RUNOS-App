@@ -37,10 +37,10 @@ private:
     static const uint16_t SHORT_IDLE_TIMEOUT;
 };
 
-const uint16_t DecisionHandler::NORMAL_HARD_TIMEOUT = 300; // 30
-const uint16_t DecisionHandler::NORMAL_IDLE_TIMEOUT = 60; // 60
-const uint16_t DecisionHandler::SHORT_HARD_TIMEOUT = 60;
-const uint16_t DecisionHandler::SHORT_IDLE_TIMEOUT = 10;
+const uint16_t DecisionHandler::NORMAL_HARD_TIMEOUT = 30;   // minutes
+const uint16_t DecisionHandler::NORMAL_IDLE_TIMEOUT = 60;   // seconds
+const uint16_t DecisionHandler::SHORT_HARD_TIMEOUT = 5;     // minutes
+const uint16_t DecisionHandler::SHORT_IDLE_TIMEOUT = 10;    // seconds
 
 
 void ControllerDDoSProtection::init(Loader *loader, const Config& config)
@@ -72,7 +72,12 @@ void ControllerDDoSProtection::init(Loader *loader, const Config& config)
                     IPv4Addr dstIPAddr = tpkt.watch(ofb_ipv4_dst);
                     IPAddressV4 dstIPAddrV4 = dstIPAddr.to_number();
 
-                    LOG(INFO) << "processMiss";
+                    if (srcIPAddrV4 == IPAddress("0.0.0.0").getIPv4() || dstIPAddrV4 == IPAddress("0.0.0.0").getIPv4())
+                    {
+                        return decision;
+                    }
+
+//                    LOG(INFO) << "processMiss";
                     LOG(INFO) << AppObject::uint32_t_ip_to_string(srcIPAddrV4) << "\t-->\t" <<AppObject::uint32_t_ip_to_string(dstIPAddrV4);
 
                     return processMiss(conn, srcIPAddrV4, decision);
@@ -128,6 +133,7 @@ void ControllerDDoSProtection::detectDDoSTimeout()
     if (isDetectedDDoS)
     {
         isDDoS = true;
+        LOG(INFO) << "DDoS detection";
     }
     users.resetStatistics();
 }
@@ -186,7 +192,10 @@ void ControllerDDoSProtection::usersStatisticsArrived(SwitchConnectionPtr conn, 
     size_t invalidFlowsNumber = 0;
     size_t minPacketNumber = 0;
 
-    if (s.size() == 0) return;
+    if (s.size() == 0) {
+        LOG(INFO) << "No flow stats";
+        return;
+    }
 
 //    of13::IPv4Src* addrPtr = s[0].match().ipv4_src();
     of13::EthSrc* addrPtr = s[0].match().eth_src();
@@ -246,7 +255,7 @@ Decision ControllerDDoSProtection::processMiss (SwitchConnectionPtr conn, IPAddr
     std::map<IPAddressV4, Users::InvalidUsersParams>::iterator invalidUser;
     Users::UsersTypes type = users.get(ipAddr, validUser, invalidUser);
 
-    LOG(INFO) << "ControllerDDoSProtection::processMiss (" << AppObject::uint32_t_ip_to_string(ipAddr) << ")";
+//    LOG(INFO) << "ControllerDDoSProtection::processMiss (" << AppObject::uint32_t_ip_to_string(ipAddr) << ")";
 
     switch (type)
     {
@@ -262,7 +271,7 @@ Decision ControllerDDoSProtection::processMiss (SwitchConnectionPtr conn, IPAddr
             emit UsersTypeChanged(conn, ipAddr);
         }
 
-        validUser->second.print();
+//        validUser->second.print();
 
         decision = (validUser->second).typeIsChecked() ? DecisionHandler::setNormalTimeouts(decision) :
                                                          DecisionHandler::setShortTimeouts(decision);
@@ -280,7 +289,7 @@ Decision ControllerDDoSProtection::processMiss (SwitchConnectionPtr conn, IPAddr
             emit UsersTypeChanged(conn, ipAddr);
         }
 
-        invalidUser->second.print();
+//        invalidUser->second.print();
 
         Users::InvalidUsersParams::InvalidUsersTypes invalidType = (invalidUser->second).getType();
         bool invalidTypeIsChecked = (invalidUser->second).typeIsChecked();
@@ -343,6 +352,7 @@ void ControllerDDoSProtection::flowRemoved (SwitchConnectionPtr conn, of13::Flow
     if (in_port_type == SPRTdetection::InPortTypes::Compromised)
     {
         isDDoS = detection.isDDoS();
+        LOG(INFO) << "Compromised";
     }
 }
 

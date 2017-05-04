@@ -10,8 +10,8 @@ class Users {
     friend class Params;
 
 public:
-    static const time_t UPDATE_VALID_AVG_CONN_TIMER_INTERVAL = 100;
-    static const time_t CLEAR_INVALID_USERS_TIMER_INTERVAL = 500;
+    static const time_t UPDATE_VALID_AVG_CONN_TIMER_INTERVAL = 120; // seconds
+    static const time_t CLEAR_INVALID_USERS_TIMER_INTERVAL = 500;   // seconds
 
     enum UsersExceptionTypes {
         IsValid,
@@ -101,8 +101,8 @@ public:
         time_t updateTime;
         time_t updateConnCounterTime;
         static const size_t INVALID_DDOS_AVG_CONN_NUMBER = 2;
-        static const time_t HARD_TIMEOUT = 6000;
-        static const time_t IDLE_TIMEOUT = 600;
+        static const time_t HARD_TIMEOUT = 6000;    // seconds
+        static const time_t IDLE_TIMEOUT = 600;     // seconds
     };
 
     class Statistics {
@@ -201,4 +201,3 @@ private:
 //        std::mutex invalidUsersLock; /* todo */
     static Statistics statistics;
 };
-

@@ -64,9 +64,9 @@ private:
     DynamicNumbers validPacketNumber;   // n
     const double x; // tolerance for accuracy (percent)
 
-    static constexpr double X = 0.01;
-    static const size_t VALID_AVG_CONN_NUMBER_MIN = 7;
-    static const size_t VALID_AVG_CONN_NUMBER_MAX = 13;
+    static constexpr double X = 0.5; // %
+    static const size_t VALID_AVG_CONN_NUMBER_MIN = 3; // test(!) data
+    static const size_t VALID_AVG_CONN_NUMBER_MAX = 9; // test(!) data
     static const size_t VALID_PACKET_NUMBER_MIN = 3; // value of n is not less than 3
     static const size_t VALID_PACKET_NUMBER_MAX = 7;
 };
