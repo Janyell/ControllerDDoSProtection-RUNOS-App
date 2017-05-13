@@ -13,6 +13,8 @@ public:
     static const time_t UPDATE_VALID_AVG_CONN_TIMER_INTERVAL = 120; // seconds
     static const time_t CLEAR_INVALID_USERS_TIMER_INTERVAL = 500;   // seconds
 
+    static constexpr double INVALID_FLOW_PERCENT = 0.5;
+
     enum UsersExceptionTypes {
         IsValid,
         IsInvalid,
@@ -25,24 +27,66 @@ public:
         Unknown
     };
 
+    class ValidUsersParams;
+    class InvalidUsersParams;
+
+    class UsersCheck { /* Reason: maple using */
+        friend class ValidUsersParams;
+        friend class InvalidUsersParams;
+    public:
+        UsersCheck (bool _isChecked = false) : isChecked(_isChecked), recheckCounter(0), flowsCounter(0), invalidFlowsCounter(0) {}
+        void updateFlowsCounter (bool isInvalidPacketNumber)
+        {
+            ++flowsCounter;
+            if (isInvalidPacketNumber) ++invalidFlowsCounter;
+//            LOG(INFO) << invalidFlowsCounter << "\t" << flowsCounter;
+        }
+        bool getIsChecked() { return isChecked; }
+        void reset() { setIsChecked(false); }
+        size_t getFlowsCounter() { return flowsCounter; }
+    private:
+        bool isInvalid() { return invalidFlowsCounter / (float) flowsCounter > INVALID_FLOW_PERCENT; }
+        void setIsChecked (bool _isChecked = true)
+        {
+            isChecked = _isChecked;
+            recheckCounter = flowsCounter = invalidFlowsCounter = 0;
+        }
+        bool isChecked;
+        size_t recheckCounter; /* todo */
+        size_t flowsCounter;
+        size_t invalidFlowsCounter;
+    };
+
+    class InvalidUsersParams;
+
     class ValidUsersParams {
         friend class Params;
     public:
         ValidUsersParams (size_t _connCounter = 1, int _avgConnNumber = NON_AVG_CONN_NUMBER):
-            isChecked(true), connCounter(_connCounter), avgConnNumber(_avgConnNumber), updateConnCounterTime(time(NULL)) { }
+            usersCheck(false), connCounter(_connCounter), avgConnNumber(_avgConnNumber), updateConnCounterTime(time(NULL)) { }
+        /* todo */
+        ValidUsersParams (InvalidUsersParams invalidUsersParams,
+                          size_t _connCounter = 1):
+            usersCheck(true), connCounter(_connCounter), avgConnNumber(invalidUsersParams.getConnCounter()), updateConnCounterTime(time(NULL)) { }
         void increaseConnCounter (const Params& params);
-        bool typeIsChecked() { return isChecked; }
+        bool typeIsChecked() { return usersCheck.getIsChecked(); }
         size_t getConnCounter() { return connCounter; }
+        void updatePacketNumber (const Params& params, uint64_t packetNumber)
+        {
+            usersCheck.updateFlowsCounter (params.isInvalidPacketNumber(packetNumber));
+        }
+        void updateIsChecked (const Params& params);
         void print();
 
     private:
         void checkType (const Params& params);
-        bool isChecked;
+        UsersCheck usersCheck;
         size_t connCounter;
         int avgConnNumber;
         time_t updateConnCounterTime;
 
         static const int NON_AVG_CONN_NUMBER = -1;
+        static const size_t RECHECK_NUMBER = 5;
     };
 
     class InvalidUsersParams {
@@ -55,14 +99,14 @@ public:
         InvalidUsersParams (size_t _connCounter = 1,
                             time_t _hardTimeout = HARD_TIMEOUT,
                             time_t _idleTimeout = IDLE_TIMEOUT)
-            : type(DDoS), isChecked(false), connCounter(_connCounter), hardTimeout(_hardTimeout), idleTimeout(_idleTimeout)
+            : type(DDoS), usersCheck(false), connCounter(_connCounter), hardTimeout(_hardTimeout), idleTimeout(_idleTimeout)
         {
             createTime = updateTime = updateConnCounterTime = time(NULL);
         }
         InvalidUsersParams (ValidUsersParams validUsersParams,
                             time_t _hardTimeout = HARD_TIMEOUT,
                             time_t _idleTimeout = IDLE_TIMEOUT)
-            : type(Malicious), isChecked(true), connCounter(validUsersParams.getConnCounter()), hardTimeout(_hardTimeout), idleTimeout(_idleTimeout)
+            : type(Malicious), usersCheck(true), connCounter(validUsersParams.getConnCounter()), hardTimeout(_hardTimeout), idleTimeout(_idleTimeout)
         {
             createTime = updateTime = updateConnCounterTime = time(NULL);
         }
@@ -75,9 +119,13 @@ public:
             return false;
         }
         InvalidUsersTypes getType() { return type; }
-        bool typeIsChecked() { return isChecked; }
-        void check() { isChecked = true; }
+        bool typeIsChecked() { return usersCheck.getIsChecked(); }
         size_t getConnCounter() { return connCounter; }
+        void updatePacketNumber (const Params& params, uint64_t packetNumber)
+        {
+            usersCheck.updateFlowsCounter (params.isInvalidPacketNumber(packetNumber));
+        }
+        void updateIsChecked (const Params& params);
         void print();
 
     private:
@@ -90,10 +138,10 @@ public:
             idleTimeout = _idleTimeout;
             createTime = updateTime = updateConnCounterTime = time(NULL);
             type = DDoS;
-            isChecked = false;
+            usersCheck.reset();
         }
         InvalidUsersTypes type;
-        bool isChecked;
+        UsersCheck usersCheck;
         size_t connCounter;
         time_t hardTimeout;
         time_t idleTimeout;
@@ -153,9 +201,15 @@ public:
         void update (Actions action,
                      InvalidUsersParams::InvalidUsersTypes typeBefore,
                      InvalidUsersParams::InvalidUsersTypes typeAfter);
+        void increaseCheckedNumber(InvalidUsersParams::InvalidUsersTypes type = InvalidUsersParams::Malicious) {
+            ++invalidMaliciousUsersParams.checkedNumber;
+        }
+        void decreaseCheckedNumber(InvalidUsersParams::InvalidUsersTypes type = InvalidUsersParams::Malicious) {
+            --invalidMaliciousUsersParams.checkedNumber;
+        }
         bool handle();
-        Statistics(): isStable(false) { }
-    private:
+        Statistics(): isStable(true) { } /* false by default */
+     private:
         UsersParams invalidDDoSUsersParams;
         UsersParams invalidMaliciousUsersParams;
         bool isStable;
@@ -170,10 +224,10 @@ public:
         static constexpr float IS_STABLE_CRITERIA = 0.2f;
 
         static const size_t INVALID_DDOS_USERS_NUMBER = 100;
-        static const size_t INVALID_DDOS_USERS_NUMBER_WEIGHT = 20;
+        static const size_t INVALID_DDOS_USERS_NUMBER_WEIGHT = 30;
 
         static const size_t INVALID_DDOS_USERS_NUMBER_OF_INSERT = 50;
-        static const size_t INVALID_DDOS_USERS_NUMBER_OF_INSERT_WEIGHT = 50;
+        static const size_t INVALID_DDOS_USERS_NUMBER_OF_INSERT_WEIGHT = 70;
 
         static constexpr float INVALID_DDOS_USERS_NUMBER_OF_CHANGE_TYPE_NUMBER = 0.6f;
         static const size_t INVALID_DDOS_USERS_NUMBER_OF_CHANGE_TYPE_NUMBER_WEIGHT = 30;
@@ -184,6 +238,7 @@ public:
                 std::map<IPAddressV4, InvalidUsersParams>::iterator &);
     void insert (IPAddressV4 ipAddr);
     void invalidate (std::map<IPAddressV4, ValidUsersParams>::iterator);
+    void validate (std::map<IPAddressV4, InvalidUsersParams>::iterator);
     void update();
 
     Statistics getStatistics()

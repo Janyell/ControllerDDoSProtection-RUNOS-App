@@ -38,13 +38,25 @@ void Users::insert (IPAddressV4 ipAddr)
 }
 
 void Users::invalidate(std::map<IPAddressV4, ValidUsersParams>::iterator it)
-{
+{    
+    LOG (INFO) << "Users::invalidate()";
     InvalidUsersParams invalidUsersParams(it->second);
     invalidUsers.insert(std::pair <IPAddressV4, InvalidUsersParams> (it->first, invalidUsersParams));
     validUsers.erase(it);
     statistics.update(Statistics::Actions::Insert,
                       InvalidUsersParams::InvalidUsersTypes::None,
                       InvalidUsersParams::InvalidUsersTypes::Malicious);
+}
+
+void Users::validate(std::map<IPAddressV4, InvalidUsersParams>::iterator it)
+{
+    LOG (INFO) << "Users::validate()";
+    ValidUsersParams validUsersParams(it->second);
+    validUsers.insert(std::pair <IPAddressV4, ValidUsersParams> (it->first, validUsersParams));
+    invalidUsers.erase(it);
+    statistics.update(Statistics::Actions::Insert,
+                      InvalidUsersParams::InvalidUsersTypes::Malicious,
+                      InvalidUsersParams::InvalidUsersTypes::None);
 }
 
 void Users::update()
@@ -99,6 +111,22 @@ void Users::ValidUsersParams::increaseConnCounter (const Params& params)
     checkType(params);
 }
 
+void Users::ValidUsersParams::updateIsChecked (const Params& params)
+{
+    size_t flowsCounter = usersCheck.getFlowsCounter();
+    if (params.isValidConnNumber(flowsCounter))
+    {
+        if (!usersCheck.isInvalid())
+        {
+            LOG (INFO) << "Valid user is checked!";
+            usersCheck.setIsChecked(true); // valid user
+        } else {
+            if (params.isInvalidConnNumber(flowsCounter))
+                throw UsersExceptionTypes::IsInvalid;
+        }
+    }
+}
+
 
 // Users::InvalidUsersParams
 void Users::InvalidUsersParams::checkType(const Params& params)
@@ -140,6 +168,24 @@ void Users::InvalidUsersParams::increaseConnCounter (const Params& params)
     checkType(params);
 }
 
+void Users::InvalidUsersParams::updateIsChecked (const Params& params)
+{
+    size_t flowsCounter = usersCheck.getFlowsCounter();
+//    LOG (INFO) << flowsCounter << "\t" << params.isInvalidConnNumber(flowsCounter);
+    if (params.isInvalidConnNumber(flowsCounter))
+    {
+        if (usersCheck.isInvalid())
+        {
+            LOG (INFO) << "Invalid malicious user is checked!";
+            usersCheck.setIsChecked(true); // invalid user
+            statistics.increaseCheckedNumber();
+        } else {
+            throw UsersExceptionTypes::IsValid;
+        }
+    }
+}
+
+
 // Users::Statistics
 void Users::Statistics::update(Actions action,
                                InvalidUsersParams::InvalidUsersTypes typeBefore,
@@ -147,6 +193,16 @@ void Users::Statistics::update(Actions action,
 {
     switch (typeBefore)
     {
+    case InvalidUsersParams::InvalidUsersTypes::None:
+        if (typeAfter == InvalidUsersParams::InvalidUsersTypes::DDoS)
+        {
+            // None --> DDoS
+            invalidDDoSUsersParams.updateNumbers(action);
+        } else {
+            // None --> Malicious
+            invalidMaliciousUsersParams.updateNumbers(action);
+        }
+        break;
     case InvalidUsersParams::InvalidUsersTypes::DDoS:
         if (action == ChangeType)
         {
@@ -165,7 +221,7 @@ void Users::Statistics::update(Actions action,
         invalidMaliciousUsersParams.updateNumbers(action);
         break;
     default:
-//        LOG(ERROR) << "Invalid InvalidUsersParams::InvalidUsersTypes!";
+        LOG(ERROR) << "Invalid InvalidUsersParams::InvalidUsersTypes!";
         break;
     }
 }
@@ -193,19 +249,21 @@ bool Users::Statistics::handle()
     {
         isStable = true;
     }
-    if (isStable && invalidDDoSUsersParams.number > INVALID_DDOS_USERS_NUMBER)
+    if (isStable && invalidDDoSUsersParams.number >= INVALID_DDOS_USERS_NUMBER)
     {
         weight += INVALID_DDOS_USERS_NUMBER_WEIGHT;
     }
-    if (isStable && invalidDDoSUsersNumberOfInsert > INVALID_DDOS_USERS_NUMBER_OF_INSERT)
+    if (isStable && invalidDDoSUsersNumberOfInsert >= INVALID_DDOS_USERS_NUMBER_OF_INSERT)
     {
         weight += INVALID_DDOS_USERS_NUMBER_OF_INSERT_WEIGHT;
     }
     if (isStable &&
-            invalidDDoSUsersNumberOfChanges.changeType / (float) invalidDDoSUsersNumber < INVALID_DDOS_USERS_NUMBER_OF_CHANGE_TYPE_NUMBER)
+            invalidDDoSUsersNumberOfChanges.changeType / (float) invalidDDoSUsersNumber <= INVALID_DDOS_USERS_NUMBER_OF_CHANGE_TYPE_NUMBER)
     {
         weight += INVALID_DDOS_USERS_NUMBER_OF_CHANGE_TYPE_NUMBER_WEIGHT;
     }
+
+//    LOG(INFO) << weight;
 
     if (weight >= IS_DDOS_WEIGHT)
     {
@@ -240,14 +298,14 @@ void Users::Statistics::UsersParams::updateNumbers(Actions action)
         ++numberOfChanges.remove;
         break;
     default:
-//        LOG(ERROR) << "Invalid Statistics::Actions!";
+        LOG(ERROR) << "Invalid Statistics::Actions!";
         break;
     }
 }
 
 void Users::ValidUsersParams::print()
 {
-    LOG(INFO) << "IsChecked:\t" << isChecked;
+    LOG(INFO) << "IsChecked:\t" << usersCheck.isChecked;
     LOG(INFO) << "ConnCounter:\t" << connCounter;
     LOG(INFO) << "AvgConnNumber:\t" << avgConnNumber;
     LOG(INFO) << "UpdateConnCounterTime:\t" << updateConnCounterTime;
@@ -255,7 +313,7 @@ void Users::ValidUsersParams::print()
 
 void Users::InvalidUsersParams::print()
 {
-    LOG(INFO) << "IsChecked:\t" << isChecked;
+    LOG(INFO) << "IsChecked:\t" << usersCheck.isChecked;
     LOG(INFO) << "ConnCounter:\t" << connCounter;
     LOG(INFO) << "UpdateConnCounterTime:\t" << updateConnCounterTime;
 }

@@ -1,12 +1,13 @@
-import sys, getopt
+import sys, getopt, random
 from scapy.all import *
 
 def main(argv):
 	n = 1
-	c = 1
-	h = 'malicious_user.py -n <ip-number> -c <packet-count>'
+	# packet-count = 1
+	t = 4
+	h = 'malicious_user.py -n <ip-number> -t <host-number>'
 	try:
-		opts, args = getopt.getopt(argv,"hn:c:",["ip-number=","packet-count="])
+		opts, args = getopt.getopt(argv,"hn:t:",["ip-number=", "host-number="])
 	except getopt.GetoptError:
 		print h
 		sys.exit(2)
@@ -16,18 +17,19 @@ def main(argv):
 			sys.exit()
 		elif opt in ("-n", "--ip-number"):
 			n = int(arg)
-		elif opt in ("-c", "--packet-count"):
-			c = int(arg)
+		elif opt in ("-t", "--host-number"):
+			t = int(arg)
 
 	i = 0
 	real_mac_src = "00:00:00:00:00:02"
-	# broadcast_mac_dst="ff:ff:ff:ff:ff:ff"
+	mac_dst_tmpl = "00:00:00:00:00:0"
 	real_ip_src = "10.0.0.2"
 	while i < n:
-		mac_dst = RandMAC()
 		ip_dst = RandIP()
+		mac_dst = mac_dst_tmpl + format(random.randint(1, t), 'x')
+		print (mac_dst)
 		p = fuzz(Ether(src=real_mac_src, dst=mac_dst)/IP(src=real_ip_src, dst=ip_dst))
-		sendp(p, count=c)
+		sendp(p)
 		i += 1
 
 if __name__ == "__main__":

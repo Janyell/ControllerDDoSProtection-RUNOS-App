@@ -12,6 +12,7 @@
 REGISTER_APPLICATION(ControllerDDoSProtection, {"controller", "switch-manager", ""})
 
 bool ControllerDDoSProtection::isDDoS = false;
+size_t ControllerDDoSProtection::detectNotDDoScounter = 0;
 Users ControllerDDoSProtection::users;
 Params ControllerDDoSProtection::params;
 ControllerDDoSProtection::SPRTdetection ControllerDDoSProtection::detection;
@@ -30,6 +31,13 @@ public:
         return decision.idle_timeout(std::chrono::seconds(SHORT_IDLE_TIMEOUT))
                 .hard_timeout(std::chrono::minutes(SHORT_HARD_TIMEOUT));
     }
+    static Decision drop (Decision decision)
+    {
+        return decision.drop()
+                .idle_timeout(std::chrono::seconds(std::chrono::seconds::zero()))
+                .hard_timeout(std::chrono::seconds(60))
+                .return_();
+    }
 private:
     static const uint16_t NORMAL_HARD_TIMEOUT;
     static const uint16_t NORMAL_IDLE_TIMEOUT;
@@ -41,7 +49,6 @@ const uint16_t DecisionHandler::NORMAL_HARD_TIMEOUT = 30;   // minutes
 const uint16_t DecisionHandler::NORMAL_IDLE_TIMEOUT = 60;   // seconds
 const uint16_t DecisionHandler::SHORT_HARD_TIMEOUT = 5;     // minutes
 const uint16_t DecisionHandler::SHORT_IDLE_TIMEOUT = 10;    // seconds
-
 
 void ControllerDDoSProtection::init(Loader *loader, const Config& config)
 {
@@ -130,11 +137,7 @@ void ControllerDDoSProtection::detectDDoSTimeout()
     users.update();
     Users::Statistics statistics = users.getStatistics();
     bool isDetectedDDoS = statistics.handle();
-    if (isDetectedDDoS)
-    {
-        isDDoS = true;
-        LOG(INFO) << "DDoS detection";
-    }
+    setDDoS(isDetectedDDoS);
     users.resetStatistics();
 }
 
@@ -148,7 +151,7 @@ void ControllerDDoSProtection::updateValidAvgConnTimeout()
 
 void ControllerDDoSProtection::clearInvalidUsersTimeout()
 {
-    LOG(INFO) << "ControllerDDoSProtection::clearInvalidUsersTimeout()";
+//    LOG(INFO) << "ControllerDDoSProtection::clearInvalidUsersTimeout()";
     /* todo */
 }
 
@@ -169,9 +172,9 @@ void ControllerDDoSProtection::getUsersStatistics (SwitchConnectionPtr conn, IPA
     }
     of13::EthSrc* oxm = new of13::EthSrc(host->mac());
     mprf.add_oxm_field(oxm);
-    mprf.cookie(0x0);  // match: cookie & mask == field.cookie & mask
-    mprf.cookie_mask(0x0);
-    mprf.flags(0);
+//    mprf.cookie(0x0);  // match: cookie & mask == field.cookie & mask
+//    mprf.cookie_mask(0x0);
+//    mprf.flags(0);
     oftran->request(conn, mprf);
 }
 
@@ -188,9 +191,6 @@ void ControllerDDoSProtection::usersStatisticsArrived(SwitchConnectionPtr conn, 
 
     of13::MultipartReplyFlow stats = reply->multipartReplyFlow;
     std::vector<of13::FlowStats> s = stats.flow_stats();
-
-    size_t invalidFlowsNumber = 0;
-    size_t minPacketNumber = 0;
 
     if (s.size() == 0) {
         LOG(INFO) << "No flow stats";
@@ -218,38 +218,66 @@ void ControllerDDoSProtection::usersStatisticsArrived(SwitchConnectionPtr conn, 
 
     LOG(INFO) << "ControllerDDoSProtection::usersStatisticsArrived (" << AppObject::uint32_t_ip_to_string(ipAddrV4) << ")";
 
+    std::map<IPAddressV4, Users::ValidUsersParams>::iterator validUser;
+    std::map<IPAddressV4, Users::InvalidUsersParams>::iterator invalidUser;
+    Users::UsersTypes userType = users.get(ipAddrV4, validUser, invalidUser);
+
     for (auto& i : s)
     {
         uint64_t packetNumber = i.packet_count();
-        minPacketNumber = std::min(packetNumber, minPacketNumber);
-        if (params.isInvalidPacketNumber(packetNumber))
+        of13::EthType* eth_type_ptr = i.match().eth_type();
+        if (eth_type_ptr == nullptr)
         {
-            ++invalidFlowsNumber;
+            LOG(WARNING) << "Cannot get ETH_TYPE from Flow Stats Message";
+            continue;
         }
-    }
-    if (invalidFlowsNumber / (float) s.size() > INVALID_FLOW_PERCENT) {
-        std::map<IPAddressV4, Users::ValidUsersParams>::iterator validUser;
-        std::map<IPAddressV4, Users::InvalidUsersParams>::iterator invalidUser;
-        Users::UsersTypes type = users.get(ipAddrV4, validUser, invalidUser);
-        switch (type)
-        {
-        case Users::UsersTypes::Invalid:
-            invalidUser->second.check();
-            break;
-        case Users::UsersTypes::Valid:
-            users.invalidate(validUser);
-            break;
-        case Users::UsersTypes::Unknown:
-            throw Users::UsersExceptionTypes::IsUnknown;
-        }
-        detectDDoSTimeout();
-    }
-}
 
+        if (packetNumber != 0 && eth_type_ptr->value() == IPv4_TYPE) {
+            switch (userType)
+            {
+            case Users::UsersTypes::Invalid:
+                invalidUser->second.updatePacketNumber(params, packetNumber);
+                break;
+            case Users::UsersTypes::Valid:
+                validUser->second.updatePacketNumber(params, packetNumber);
+                break;
+            case Users::UsersTypes::Unknown:
+                throw Users::UsersExceptionTypes::IsUnknown;
+            }
+        } // else useless stats
+    }
+
+    switch (userType)
+    {
+    case Users::UsersTypes::Invalid:
+        try
+        {
+            invalidUser->second.updateIsChecked(params);
+        }
+        catch (Users::UsersExceptionTypes)
+        {
+            users.validate(invalidUser);
+        }
+        break;
+    case Users::UsersTypes::Valid:
+        try
+        {
+            validUser->second.updateIsChecked(params);
+        }
+        catch (Users::UsersExceptionTypes)
+        {
+            users.invalidate(validUser);
+        }
+        break;
+    case Users::UsersTypes::Unknown:
+        throw Users::UsersExceptionTypes::IsUnknown;
+    }
+    detectDDoSTimeout();
+}
 
 Decision ControllerDDoSProtection::processMiss (SwitchConnectionPtr conn, IPAddressV4 ipAddr, Decision decision)
 {
-    params.print();
+//    params.print();
 
     std::map<IPAddressV4, Users::ValidUsersParams>::iterator validUser;
     std::map<IPAddressV4, Users::InvalidUsersParams>::iterator invalidUser;
@@ -260,28 +288,28 @@ Decision ControllerDDoSProtection::processMiss (SwitchConnectionPtr conn, IPAddr
     switch (type)
     {
     case Users::UsersTypes::Valid:
+    {
         LOG(INFO) << "Users::UsersTypes::Valid";
+        Users::ValidUsersParams& userParams = validUser->second;
         try
         {
-            (validUser->second).increaseConnCounter(params);
+            userParams.increaseConnCounter(params);
         }
         catch (Users::UsersExceptionTypes)
         {
             LOG(INFO) << "Valid --> Valid or Malicious";
             emit UsersTypeChanged(conn, ipAddr);
         }
-
-//        validUser->second.print();
-
-        decision = (validUser->second).typeIsChecked() ? DecisionHandler::setNormalTimeouts(decision) :
-                                                         DecisionHandler::setShortTimeouts(decision);
+        decision = DecisionHandler::setNormalTimeouts(decision);
         break;
+    }
     case Users::UsersTypes::Invalid:
     {
-        LOG(INFO) << "Users::UsersTypes::Invalid";
+        LOG(INFO) << "Users::UsersTypes::Invalid";        
+        Users::InvalidUsersParams& userParams = invalidUser->second;
         try
         {
-            invalidUser->second.increaseConnCounter(params);
+            userParams.increaseConnCounter(params);
         }
         catch (Users::UsersExceptionTypes)
         {
@@ -291,17 +319,15 @@ Decision ControllerDDoSProtection::processMiss (SwitchConnectionPtr conn, IPAddr
 
 //        invalidUser->second.print();
 
-        Users::InvalidUsersParams::InvalidUsersTypes invalidType = (invalidUser->second).getType();
-        bool invalidTypeIsChecked = (invalidUser->second).typeIsChecked();
+        Users::InvalidUsersParams::InvalidUsersTypes invalidType = userParams.getType();
+        bool invalidTypeIsChecked = userParams.typeIsChecked();
         if (invalidType == Users::InvalidUsersParams::InvalidUsersTypes::Malicious
-                && invalidTypeIsChecked == 1)
+                && invalidTypeIsChecked == 1) //
         {
             // Block
-            decision = DecisionHandler::setNormalTimeouts(decision);
-            return decision.drop().return_();
+            return DecisionHandler::drop(decision);
         }
 
-        /* ? */
         decision = isDDoS ? DecisionHandler::setShortTimeouts(decision) : DecisionHandler::setNormalTimeouts(decision);
         break;
     }
@@ -316,11 +342,14 @@ Decision ControllerDDoSProtection::processMiss (SwitchConnectionPtr conn, IPAddr
 
 
 void ControllerDDoSProtection::flowRemoved (SwitchConnectionPtr conn, of13::FlowRemoved fr) {
-    LOG(INFO) << "ControllerDDoSProtection::flowRemoved()";
+//    LOG(INFO) << "ControllerDDoSProtection::flowRemoved()";
     Dpid dpid = conn->dpid();
-    LOG(INFO) << "dpid = " << dpid;
+//    LOG(INFO) << "dpid = " << dpid;
+
     uint64_t packet_count = fr.packet_count();
-    LOG(INFO) << "packet_count = " << packet_count;
+    if (packet_count == 0)
+        return; // useless
+//    LOG(INFO) << "packet_count = " << packet_count;
 
     of13::InPort* in_port_ptr = fr.match().in_port();
     InPort in_port;
@@ -346,13 +375,71 @@ void ControllerDDoSProtection::flowRemoved (SwitchConnectionPtr conn, of13::Flow
     } else {
         in_port = in_port_ptr->value();
     }
-    LOG(INFO) << "in_port = " << in_port;
+//    LOG(INFO) << "in_port = " << in_port;
 
     SPRTdetection::InPortTypes in_port_type = detection.isCompromisedInPort(dpid, in_port, packet_count, params.getValidPacketNumber().cur);
     if (in_port_type == SPRTdetection::InPortTypes::Compromised)
     {
-        isDDoS = detection.isDDoS();
-        LOG(INFO) << "Compromised";
+        LOG(INFO) << "Switch ID: " << dpid << ", in_port: " << in_port << " is compromised!";
+        setDDoS (detection.isDDoS());
+    }
+
+    // Users check
+    of13::EthType* eth_type_ptr = fr.match().eth_type();
+    if (eth_type_ptr == nullptr || eth_type_ptr->value() != IPv4_TYPE)
+        return; // useless
+
+    of13::EthSrc* addrPtr = fr.match().eth_src();
+    if (addrPtr == nullptr)
+    {
+        LOG(WARNING) << "Cannot get ETH_SRC from Flow Removed Message";
+        return;
+    }
+
+    EthAddress ethAddr = addrPtr->value();
+    Host* host = host_manager->getHost(ethAddr.to_string());
+    if (host == nullptr)
+    {
+        LOG(WARNING) << "Cannot get host by MAC: " << ethAddr.to_string() << " from HostManager";
+        return;
+    }
+
+    IPAddress ipAddr = host->ip();
+    IPAddressV4 ipAddrV4 = ipAddr.getIPv4();
+
+    std::map<IPAddressV4, Users::ValidUsersParams>::iterator validUser;
+    std::map<IPAddressV4, Users::InvalidUsersParams>::iterator invalidUser;
+    Users::UsersTypes userType = users.get(ipAddrV4, validUser, invalidUser);
+    LOG(INFO) << "IP: " << AppObject::uint32_t_ip_to_string(ipAddrV4) << ", packet_count: " << packet_count;
+    switch (userType)
+    {
+    case Users::UsersTypes::Invalid:
+        try
+        {
+            Users::InvalidUsersParams& userParams = invalidUser->second;
+            userParams.updatePacketNumber(params, packet_count);
+            userParams.updateIsChecked(params);
+        }
+        catch (Users::UsersExceptionTypes)
+        {
+            users.validate(invalidUser);
+        }
+        break;
+    case Users::UsersTypes::Valid:
+        try
+        {
+            Users::ValidUsersParams& userParams = validUser->second;
+            userParams.updatePacketNumber(params, packet_count);
+            userParams.updateIsChecked(params);
+        }
+        catch (Users::UsersExceptionTypes)
+        {
+            users.invalidate(validUser);
+        }
+
+        break;
+    case Users::UsersTypes::Unknown:
+        throw Users::UsersExceptionTypes::IsUnknown;
     }
 }
 
@@ -443,4 +530,20 @@ bool ControllerDDoSProtection::SPRTdetection::insertInPort(InPort i, Dmap::itera
     std::pair<Imap::iterator, bool> ret = di->second.insert(std::pair<InPort, Dn>(i, d0));
     dn = ret.first;
     return ret.second;
+}
+
+void ControllerDDoSProtection::setDDoS (bool value)
+{
+    if (!isDDoS && value)
+    {
+        isDDoS = true;
+        detectNotDDoScounter = 0;
+        LOG(INFO) << "DDoS is detected";
+        return;
+    }
+    if (isDDoS && !value && ++detectNotDDoScounter >= DETECT_NOT_DDOS_NUMBER)
+    {
+        isDDoS = false;
+        LOG(INFO) << "No DDoS is detected";
+    }
 }

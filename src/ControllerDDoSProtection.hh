@@ -32,15 +32,16 @@ private:
     Decision processMiss (SwitchConnectionPtr conn, IPAddressV4 ipAddr, Decision decision);
 
     static bool isDDoS;
+    static size_t detectNotDDoScounter;
+    static const size_t DETECT_NOT_DDOS_NUMBER = 10;
+    static void setDDoS(bool);
 
     QTimer* detectDDoSTimer;
-    static const time_t DETECT_DDOS_TIMER_INTERVAL = 5;
+    static const time_t DETECT_DDOS_TIMER_INTERVAL = 30;
 
     QTimer* updateValidAvgConnTimer; // Users::UPDATE_VALID_AVG_CONN_TIMER_INTERVAL
 
     QTimer* clearInvalidUsersTimer; // Users::CLEAR_INVALID_USERS_TIMER_INTERVAL
-
-    static constexpr double INVALID_FLOW_PERCENT = 0.1;
 
     OFTransaction* oftran;
     HostManager* host_manager;
