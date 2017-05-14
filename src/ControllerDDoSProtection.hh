@@ -82,7 +82,7 @@ private:
             static constexpr double ALPHA = 0.01;
             static constexpr double BETA = 0.02;
             static constexpr double LAMBDA_0 = 0.33;
-            static constexpr double LAMBDA_1 = 0.6;
+            static constexpr double LAMBDA_1 = 0.5;
         };
 
 
@@ -100,8 +100,8 @@ private:
             dn->second.din += (c <= cMax) ? log( config.lambda1 / config.lambda0 ) :
                                      log( (1 - config.lambda1) / (1 - config.lambda0) );
         }
-        double countA() { return config.beta / (1 - config.alpha); }
-        double countB() { return (1 - config.beta) / config.alpha; }
+        double countA() { return log ((1 - config.beta) / config.alpha); }
+        double countB() { return log (config.beta / (1 - config.alpha)); }
         InPortTypes checkDin (Imap::iterator& dn);
 
         bool getDi (Dpid dpid, InPort i, Imap::iterator& dn);

@@ -125,7 +125,7 @@ void ControllerDDoSProtection::init(Loader *loader, const Config& config)
 
 void ControllerDDoSProtection::startUp (Loader *loader)
 {
-    detectDDoSTimer->start (DETECT_DDOS_TIMER_INTERVAL * 1000);
+//    detectDDoSTimer->start (DETECT_DDOS_TIMER_INTERVAL * 1000);
     updateValidAvgConnTimer->start (Users::UPDATE_VALID_AVG_CONN_TIMER_INTERVAL * 1000);
     clearInvalidUsersTimer->start (Users::CLEAR_INVALID_USERS_TIMER_INTERVAL * 1000);
 }
@@ -305,7 +305,7 @@ Decision ControllerDDoSProtection::processMiss (SwitchConnectionPtr conn, IPAddr
     }
     case Users::UsersTypes::Invalid:
     {
-        LOG(INFO) << "Users::UsersTypes::Invalid";        
+        LOG(INFO) << "Users::UsersTypes::Invalid";
         Users::InvalidUsersParams& userParams = invalidUser->second;
         try
         {

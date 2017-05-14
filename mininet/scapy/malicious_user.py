@@ -4,7 +4,7 @@ from scapy.all import *
 def main(argv):
 	n = 1
 	# packet-count = 1
-	t = 4
+	t = 15
 	h = 'malicious_user.py -n <ip-number> -t <host-number>'
 	try:
 		opts, args = getopt.getopt(argv,"hn:t:",["ip-number=", "host-number="])
